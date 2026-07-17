@@ -1,0 +1,117 @@
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.8.4-python3.11
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://bootcamp:bootcamp@postgres:5432/airflow
+    AIRFLOW__CORE__FERNET_KEY: "duC2OXPOjoFLCnBuqeJ_Jk2-5d12H5NBD0xqz5z8="
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    # Rutas de datos (usadas por DAGs y scripts en fases posteriores)
+    DATA_ROOT: /opt/airflow/data
+    PARQUET_BRONZE: /opt/airflow/data/parquet/bronze
+    PARQUET_SILVER: /opt/airflow/data/parquet/silver
+    # Conexión Gold (PostgreSQL) — Connection ID: postgres_gold
+    AIRFLOW_CONN_POSTGRES_GOLD: "postgresql://bootcamp:bootcamp@postgres:5432/gold"
+    _PIP_ADDITIONAL_REQUIREMENTS: "pandas pyarrow sqlalchemy psycopg2-binary"
+  volumes:
+    - ../dags:/opt/airflow/dags
+    - ../src:/opt/airflow/src
+    - ../sql:/opt/airflow/sql
+    - ../data:/opt/airflow/data
+    - ../notebooks:/opt/airflow/notebooks
+    - airflow_logs:/opt/airflow/logs
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bootcamp_postgres
+    environment:
+      POSTGRES_USER: bootcamp
+      POSTGRES_PASSWORD: bootcamp
+      POSTGRES_DB: gold
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bootcamp -d gold"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: bootcamp_airflow_init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@local || true
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: bootcamp_airflow_webserver
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: bootcamp_airflow_scheduler
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  jupyter:
+    image: jupyter/scipy-notebook:python-3.11
+    container_name: bootcamp_jupyter
+    ports:
+      - "8888:8888"
+    environment:
+      JUPYTER_ENABLE_LAB: "yes"
+      JUPYTER_TOKEN: bootcamp
+      GRANT_SUDO: "yes"
+    volumes:
+      - ../notebooks:/home/jovyan/work/notebooks
+      - ../data:/home/jovyan/work/data
+      - ../src:/home/jovyan/work/src
+      - ../sql:/home/jovyan/work/sql
+    working_dir: /home/jovyan/work
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  airflow_logs:
