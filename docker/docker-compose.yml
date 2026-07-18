@@ -109,6 +109,8 @@ services:
       - ../data:/home/jovyan/work/data
       - ../src:/home/jovyan/work/src
       - ../sql:/home/jovyan/work/sql
+      - ../manifest.json:/home/jovyan/work/manifest.json:ro
+      - ../docs:/home/jovyan/work/docs:ro
     working_dir: /home/jovyan/work
     restart: unless-stopped
 
