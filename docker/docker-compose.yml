@@ -1,4 +1,3 @@
-
 x-airflow-common: &airflow-common
   image: apache/airflow:2.8.4-python3.11
   environment: &airflow-common-env
@@ -8,12 +7,20 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
-    # Rutas de datos (usadas por DAGs y scripts en fases posteriores)
+
+
     DATA_ROOT: /opt/airflow/data
     PARQUET_BRONZE: /opt/airflow/data/parquet/bronze
     PARQUET_SILVER: /opt/airflow/data/parquet/silver
-    # Conexión Gold (PostgreSQL) — Connection ID: postgres_gold
+
+    
     AIRFLOW_CONN_POSTGRES_GOLD: "postgresql://bootcamp:bootcamp@postgres:5432/gold"
+
+
+    POSTGRES_URL: "postgresql+psycopg2://bootcamp:bootcamp@postgres:5432/gold"
+
+
+    PIPELINE_STARTUP_DELAY_SECONDS: "10"
     _PIP_ADDITIONAL_REQUIREMENTS: "pandas pyarrow sqlalchemy psycopg2-binary"
   volumes:
     - ../dags:/opt/airflow/dags
@@ -21,6 +28,7 @@ x-airflow-common: &airflow-common
     - ../sql:/opt/airflow/sql
     - ../data:/opt/airflow/data
     - ../notebooks:/opt/airflow/notebooks
+    - ./airflow/trigger-pipeline.sh:/trigger-pipeline.sh:ro
     - airflow_logs:/opt/airflow/logs
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
@@ -95,6 +103,18 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  airflow-trigger:
+    <<: *airflow-common
+    container_name: bootcamp_airflow_trigger
+    entrypoint: /bin/bash
+    command: ["/trigger-pipeline.sh"]
+    restart: "no"
+    depends_on:
+      airflow-scheduler:
+        condition: service_started
+      airflow-webserver:
+        condition: service_started
+
   jupyter:
     image: jupyter/scipy-notebook:python-3.11
     container_name: bootcamp_jupyter
@@ -104,6 +124,7 @@ services:
       JUPYTER_ENABLE_LAB: "yes"
       JUPYTER_TOKEN: bootcamp
       GRANT_SUDO: "yes"
+      POSTGRES_URL: "postgresql+psycopg2://bootcamp:bootcamp@postgres:5432/gold"
     volumes:
       - ../notebooks:/home/jovyan/work/notebooks
       - ../data:/home/jovyan/work/data
@@ -111,6 +132,8 @@ services:
       - ../sql:/home/jovyan/work/sql
       - ../manifest.json:/home/jovyan/work/manifest.json:ro
       - ../docs:/home/jovyan/work/docs:ro
+      - ../dags:/home/jovyan/work/dags:ro
+      - ./jupyter/before-notebook.d:/usr/local/bin/before-notebook.d
     working_dir: /home/jovyan/work
     restart: unless-stopped
 
